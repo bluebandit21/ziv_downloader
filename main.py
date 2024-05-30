@@ -3,6 +3,12 @@
 import requests
 import bs4
 from pyrate_limiter import Duration, Rate, Limiter, BucketFullException
+import typing
+import zipfile
+import io
+
+class BadChart(Exception):
+    pass
 
 limiter = Limiter(Rate(4, Duration.SECOND), max_delay=10000)
 
@@ -18,18 +24,41 @@ def crawl_pack(url: str):
     pack_page_html = lget(url).content
     pack_page = bs4.BeautifulSoup(pack_page_html, features="html.parser")
 
+    pack_name = pack_page.find(attrs={"class":"headertop"}).find('h1').contents[0]
+
     def is_chart_elt(tag):
         if (not tag.has_attr("id")) or (not tag.has_attr("href")):
             return False
         return tag['id'].startswith("sim") and tag['href'].startswith("viewsimfile.php")
     
     chart_elts = pack_page.find_all(is_chart_elt)
-    chart_hrefs = [ZIV_BASE + chart_elt['href'] for chart_elt in chart_elts]
+    chart_hrefs: typing.List[str] = [chart_elt['href'] for chart_elt in chart_elts]
 
-    print(chart_hrefs)
+    chart_ids = [
+        href[href.rfind('=')+1:] for href in chart_hrefs
+    ]
 
-def access_chart(url: str):
-    pass
+    for chart_id in chart_ids:
+        try:
+            access_chart(f"downloads/{pack_name}", chart_id)
+        except:
+            print("\t\tBad Chart? -- Human Intervention Required")
+
+
+def access_chart(pack_name: str, chart_id: str):
+    chart_url = f"{ZIV_BASE}download.php?type=ddrsimfile&simfileid={chart_id}"
+    chart_url_alt = f"{ZIV_BASE}download.php?type=ddrsimfilecustom&simfileid={chart_id}"
+    print(f"\tFetching: {chart_url}...")
+   
+    chart = lget(chart_url)
+    if chart.content.startswith("File not found".encode(encoding='ascii')):
+        print(f"\t\tUnavailable; trying {chart_url_alt}...")
+        chart = lget(chart_url_alt)
+        if chart.content.startswith("File not found".encode(encoding='ascii')):
+            raise BadChart()
+        
+    zipf = zipfile.ZipFile(io.BytesIO(chart.content))
+    zipf.extractall(pack_name)
 
 
 
